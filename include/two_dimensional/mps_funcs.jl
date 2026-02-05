@@ -1,59 +1,74 @@
 using ITensors, ITensorMPS, LinearAlgebra
 
 
-"""
-Quantum Gates
-"""
-const h_gate = [1 1; 1 -1] ./ sqrt(2)
+include("gates.jl")
 
-RIX(θ::Float64) = Array{ComplexF64}([cos(θ/2) -1im*sin(θ/2) 0 0; 
-                                    -1im*sin(θ/2) cos(θ/2) 0 0;
-                                    0 0 cos(θ/2) -1im*sin(θ/2);
-                                    0 0 -1im*sin(θ/2) cos(θ/2)
-                                    ])
-const rix_p = RIX(pi/2)
-ZZPhase(θ::Float64) = Array{ComplexF64}([exp(-1im/2*θ) 0 0 0;
-                                    0 exp(+1im/2*θ) 0 0;
-                                    0 0 exp(+1im/2*θ) 0;
-                                    0 0 0 exp(-1im/2*θ)
-                                    ])
-get_int(s) = parse(Int, s, base=2)
-get_bit(idx, n) = string(idx, base=2, pad=n)
 
-mutable struct GateNet
-    Ngates::Int64 # number of gates each layer
-    indices::Array{Tuple{Int64,Int64}} # (site_i,site_j)_idx 
-    paras::Array{Float64,1} # idx
+function coor2idx(coor::Tuple{Int64, Int64},l::Int)
+  x,y = coor
+  if x % 2 == 1
+    idx = (x-1)*l + y
+  else
+    idx = (x-1)*l + (l-y+1)
+  end
+  return idx
 end
-function _tensorzy!(tmat::Matrix{Float64}, a::Real)
-    # exp(-i a/2 ZY) = RIX(-pi/2) ZZPhase(a) RIX(pi/2)
-    if all(a .== 0)
-        umat = Matrix{Float64}(I(4))
+"""
+Functions for initializing the whip circuit
+    Use a defintion that is consistent with the MPS geometry
+"""
+function sqr_whip_sfzy_obc(l::Int64)
+  function coor2idx(coor::Tuple{Int64, Int64})
+    x,y = coor
+    if x % 2 == 1
+      idx = (x-1)*l + y
     else
-        umat = real(rix_p' * ZZPhase(a) * rix_p)
+      idx = (x-1)*l + (l-y+1)
     end
-    gate2mat!(tmat, umat)
-end
-function gate2mat!(tmat::Matrix{Float64},umat::Matrix{Float64})
-    """  (i j) -> (si' sj') (si sj)
-    Note the unitary gate is defined as
-    |00>' = c0000|00> + c0001|01> + c0010|10> + c0011|11>
-    |01>' = c0100|00> + c0101|01> + c0110|10> + c0111|11>
-    |10>' = c1000|00> + c1001|01> + c1010|10> + c1011|11>
-    |11>' = c1100|00> + c1101|01> + c1110|10> + c1111|11>
-    The elements stored in Tensor look like 0000 1000 0100 1100 ...
-    If we directly reshape the unitary into a matrix in row-first order, the matrix elements 
-    would not match the basis: (00,01,10,11)
-    """
-    basis = ["00","01","10","11"]
-    for (i,bi) in enumerate(basis) # si'sj'
-        for (j,bj) in enumerate(basis) # si sj
-            s = reverse(bi * bj)
-            idx = get_int(s) + 1 # because 000 = 1
-            tmat[idx] = umat[i,j]
-        end
+    return idx
+  end
+  x0, y0 = l, l
+  coupling_map = Array([])
+  for x in 1:x0
+    for y in 1:y0
+      coor1 = (x, y)
+      coor2 = (x+1, y)
+      coor3 = (x, y+1)
+      if (x<x0) && (y<y0)
+        y==1 ? push!(coupling_map, (coor1, coor2, +2.0)) : push!(coupling_map, (coor1, coor2, +1.0)) # right
+        x==1 ? push!(coupling_map, (coor1, coor3, +2.0)) : push!(coupling_map, (coor1, coor3, +1.0))     # up
+      elseif (x<x0) && (y==y0)
+        push!(coupling_map, (coor1, coor2, +1.0)) # right
+      elseif (x==x0) && (y<y0)
+        push!(coupling_map, (coor1, coor3, +1.0)) # up
+      else
+        # println(x," ",y)
+        nothing
+      end
     end
+  end
+  # generate gate_map
+  gate_map = Array([])
+  for obj in coupling_map
+    coor_out, coor_in, angle = obj
+    idx_out, idx_in = coor2idx(coor_out),coor2idx(coor_in)
+    push!(gate_map, (idx_out, idx_in, angle))
+  end
+  return gate_map, coupling_map
 end
+
+function make_sqr_whip_gates_obc(l::Int64, theta::Float64)
+    g_map, c_map = sqr_whip_sfzy_obc(l)
+    indices = []
+    paras = zeros(Float64, length(g_map))
+    for (i,obj) in enumerate(g_map)
+        idx_out, idx_in, angle = obj
+        push!(indices, (idx_out, idx_in))
+        paras[i] = theta * angle
+    end
+    GateNet(length(paras), indices, paras)
+end
+
 
 """
 Functions for tensor contractions
@@ -160,7 +175,7 @@ function insert_identity_mpo_and_expand(sites::Vector{Index{Int64}}, nonlocT2::I
     replaceind!(q, link_indice, link_q)
     link_inds = []
     for i in 1:N
-        if (i >= qi) & (i+1 <= qj)
+        if (i >= qi) && (i+1 <= qj)
             if i == qi
               push!(link_inds, link_u) # link start from u
             elseif i+1 == qj
@@ -321,61 +336,6 @@ function mps_equal_superposition(N::Int64)
 end
 
 """
-Functions for initializing the whip circuit
-"""
-function sqr_whip_sfzy_obc(l::Int64)
-  function coor2idx(coor::Tuple{Int64, Int64})
-    x,y = coor
-    if x % 2 == 1
-      idx = (x-1)*l + y
-    else
-      idx = (x-1)*l + (l-y+1)
-    end
-    return idx
-  end
-  x0, y0 = l, l
-  coupling_map = Array([])
-  for x in 1:x0
-    for y in 1:y0
-      coor1 = (x, y)
-      coor2 = (x+1, y)
-      coor3 = (x, y+1)
-      if (x<x0) & (y<y0)
-        y==1 ? push!(coupling_map, (coor1, coor2, +1.0)) : push!(coupling_map, (coor1, coor2, +0.5)) # right
-        x==1 ? push!(coupling_map, (coor1, coor3, +1.0)) : push!(coupling_map, (coor1, coor3, +0.5)) # up
-      elseif (x<x0) & (y==y0)
-        push!(coupling_map, (coor1, coor2, +0.5)) # right
-      elseif (x==x0) & (y<y0)
-        push!(coupling_map, (coor1, coor3, +0.5)) # up
-      else
-        # println(x," ",y)
-        nothing
-      end
-    end
-  end
-  # generate gate_map
-  gate_map = Array([])
-  for obj in coupling_map
-    coor_out, coor_in, angle = obj
-    idx_out, idx_in = coor2idx(coor_out),coor2idx(coor_in)
-    push!(gate_map, (idx_out, idx_in, angle))
-  end
-  return gate_map, coupling_map
-end
-
-function make_sqr_whip_gates_obc(l::Int64, theta::Float64)
-    g_map, c_map = sqr_whip_sfzy_obc(l)
-    indices = []
-    paras = zeros(Float64, length(g_map))
-    for (i,obj) in enumerate(g_map)
-        idx_out, idx_in, angle = obj
-        push!(indices, (idx_out, idx_in))
-        paras[i] = theta * angle
-    end
-    GateNet(length(paras), indices, paras)
-end
-
-"""
 Functions for executing the whip circuit
 """
 function make_contraction!(gates::GateNet, Tm::Array{ITensor}, mps::MPS, chi::Int64, cutoff::Float64=1E-16, checklinkdim::Bool=true)
@@ -388,7 +348,7 @@ function make_contraction!(gates::GateNet, Tm::Array{ITensor}, mps::MPS, chi::In
         else
             sitewise_local_contraction!(mps, G2, i, j, chi, cutoff)
         end
-        if checklinkdim & (idx==gates.Ngates)
+        if checklinkdim && (idx==gates.Ngates)
             # println(mps)
             println("link dimensions: ", maxlinkdim(mps))
             # @assert 1==0
@@ -401,7 +361,7 @@ function make_contraction_buildin!(gates::GateNet, Tm::Array{ITensor}, mps::MPS,
     for idx in 1:gates.Ngates
         G2 = Tm[idx] # tensor of a two-qubit gate
         mps .= apply(G2, mps; maxdim=chi, cutoff=cutoff)
-        if checklinkdim & (idx==gates.Ngates)
+        if checklinkdim && (idx==gates.Ngates)
             println("link dimensions: ", maxlinkdim(mps))
         end
     end

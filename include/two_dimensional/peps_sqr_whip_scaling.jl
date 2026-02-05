@@ -7,17 +7,18 @@ const ROOT_PATH = "$(homedir())/Documents/QC_whip/code-2d/"
 # System parameters
 L = parse(Int, ARGS[1])
 chi = parse(Int, ARGS[2])
+global min_chi = 4
 use_projector = parse(Bool, ARGS[3])
-cutoff = 1e-16
+cutoff = parse(Float64, ARGS[4])
 N = L*L
 
 # initial state |++...+>
 ket_es = twodim_sqr_peps(L, "+"^N);
 sites = get_siteinds(ket_es)
 
-
-THETAS = Array{Float64}([pi/4*16/20,pi/4*18/20])#([pi/4*i/20 for i in -40:1:40])
-MaxDims = Array{Int64}([])
+THETAS = Array{Float64}([pi/4*i/100 for i in -10:1:10]) .+ pi/4
+# THETAS = Array{Float64}([pi/4*18/20,pi/4*19/20])#([pi/4*i/20 for i in -40:1:40])
+LinkDims = Array{Vector{Int64}}([])
 ZZs = Array{Float64}([])
 
 # boundary index
@@ -66,7 +67,7 @@ for (i,theta) in enumerate(THETAS)
     zz_val, coeff, link_dims = contract_twopeps_bdr_mps(zzpsi, psi, chi, cutoff, plev=1)
     val_tot += real(zz_val/val3)
   end
-  push!(MaxDims, maximum(link_dims))
+  push!(LinkDims, link_dims)
   push!(ZZs, val_tot/N)
   # boundary X
   """
@@ -103,13 +104,17 @@ end
 elapsed_ns = time_ns() - start_time
 
 
-dir_str = "$(ROOT_PATH)/data/"
+dir_str = "$(ROOT_PATH)/data/scaling"
 if !isdir("$dir_str")
     mkdir("$dir_str")
 end
 
 # file_str = "2D_sqr_PEPS_Whip_MPO_L$(L)_Chi$(chi)_ZZ_Z_P$(use_projector)"
-file_str = "2D_sqr_PEPS_Whip_MPO_L$(L)_Chi$(chi)_ZZ_scaling"
+if min_chi == chi
+  file_str = "2D_sqr_PEPS_Whip_MPO_L$(L)_Chi$(chi)_ZZ_$(min_chi)_$(cutoff)_time"
+else
+  file_str = "2D_sqr_PEPS_Whip_MPO_L$(L)_Chi$(chi)_ZZ_$(min_chi)_$(cutoff)_finer"
+end
 
 # jldopen("example.jld2", "w") do f
 #     f["a"] = 1
@@ -118,7 +123,7 @@ file_str = "2D_sqr_PEPS_Whip_MPO_L$(L)_Chi$(chi)_ZZ_scaling"
 # end
 
 jldsave("$dir_str/$file_str"*".jld2"; 
-    saved_linkdim=MaxDims,
+    saved_linkdim=LinkDims,
     saved_thetas=THETAS,
     saved_zz=ZZs,
     total_time_sec=elapsed_ns * 1e-9

@@ -203,19 +203,19 @@ Functions for initializing the whip circuit
 """
 function make_1d_whip_gates(nbits::Int64, theta::Float64, use_nl_op=true)
     if nbits == 2
-        paras = Array([theta])
+        paras = Array([theta*2])
         indices = [(1,nbits)]
     else
         if use_nl_op
             indices = [(1,nbits)]
             paras = zeros(Float64, nbits)
-            paras[1] = theta/2
-            paras[2:end-1] .= theta
-            paras[end] = theta/2
+            paras[1] = theta
+            paras[2:end-1] .= theta * 2
+            paras[end] = theta
         else
             indices = []
             paras = zeros(Float64, nbits-1)
-            paras .= theta
+            paras .= theta * 2
         end
         for i in 1:nbits-1
             push!(indices, (i,i+1))
@@ -233,7 +233,7 @@ function make_contraction!(gates::GateNet, Tm::Array{ITensor}, mps::MPS, chi::In
     for idx in 1:gates.Ngates
         G2 = Tm[idx] # tensor of a two-qubit gate
         i, j = gates.indices[idx] # site indices
-        if abs(i-j)!=1 & isopen
+        if abs(i-j)!=1 && isopen
             sitewise_nonlocal_contraction!(mps, G2, i, j, chi, cutoff)
         else
             sitewise_local_contraction!(mps, G2, i, j, chi, cutoff)
@@ -288,7 +288,7 @@ function check_ground_state_configuration(mps::MPS, isopen::Bool=true)
     psivec = get_statevector_from_mps(nbits, mps, isopen)
     nz_loc = []
     for i in eachindex(psivec)
-        if isapprox(psivec[i], 0, atol=1E-14)
+        if isapprox(psivec[i], 0, atol=1E-12)
             continue
         else
             push!(nz_loc, i)
@@ -315,5 +315,5 @@ function entanglement_entropy_svd(mps::MPS, cut_bond)
           S_vN -= p * log2(p)
     #   end
     end
-    S_vN
+    S_vN, diag(S)
 end

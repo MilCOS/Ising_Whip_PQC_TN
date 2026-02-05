@@ -19,8 +19,9 @@ ket_es = mps_equal_superposition(N, isopen)
 sites = siteinds(ket_es)
 
 # 
-THETAS = Array{Float64}([pi*2 * i/200 for i in 0:200])
+THETAS = Array{Float64}([pi/2 * i/100 for i in -100:100])
 SvNs = Array{Float64}([])
+EvNs = Array{Vector{Float64}}([])
 MaxDims = Array{Int64}([])
 
 psi = deepcopy(ket_es)
@@ -28,26 +29,32 @@ for theta in THETAS
   gates = make_1d_whip_gates(N, theta, use_nl_op)
   zytensors = make_tensormap_of_ZY(gates, sites)
   psi .= ket_es
-#   psi = deepcopy(ket_es)
-  # make_contraction!(gates, zytensors, psi, chi, cutoff)
-  make_contraction_buildin!(gates, zytensors, psi, chi, cutoff)
-  s_vn = entanglement_entropy_svd(psi, cut_bond)
+  # psi = deepcopy(ket_es)
+  make_contraction!(gates, zytensors, psi, chi, cutoff)
+  # make_contraction_buildin!(gates, zytensors, psi, chi, cutoff)
+  s_vn, e_vn = entanglement_entropy_svd(psi, cut_bond)
   
   push!(MaxDims, maxlinkdim(psi))
   push!(SvNs, s_vn)
+  push!(EvNs, e_vn)
 end
 
 println(maximum(MaxDims))
 println(maximum(SvNs))
+EvNs_new = zeros(Float64, length(THETAS), maximum(MaxDims)) .+ 100
+for i in eachindex(THETAS)
+  EvNs_new[i,1:length(EvNs[i])] = EvNs[i]
+end
 
 dir_str = "$(ROOT_PATH)/data/"
 if !isdir("$dir_str")
     mkdir("$dir_str")
 end
-file_str = "1D_chain_Whip_$(bdc)_UseNlOp$(Int(use_nl_op))_N$(N)_Chi$(chi)"
+file_str = "1D_chain_Whip_$(bdc)_UseNlOp$(Int(use_nl_op))_N$(N)_Chi$(chi)_2"
 
 jldsave("$dir_str$file_str"*".jld2"; 
     saved_svn=SvNs, 
+    saved_evn=EvNs_new,
     saved_linkdim=MaxDims,
     saved_thetas=THETAS
 )

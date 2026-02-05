@@ -18,7 +18,7 @@ sites = siteinds(ket_es)
 
 # 
 # if N<=50
-THETAS = Array{Float64}([pi/4 * i/100 for i in 100:1:101])
+THETAS = Array{Float64}([pi/4 * i/10 for i in 000:1:40])
 # else
 #   THETAS = Array{Float64}([pi/2 * i/N for i in -N:1:N])
 # end
@@ -37,7 +37,6 @@ for theta in THETAS
   zytensors = make_tensormap_of_ZY(gates, sites)
   psi .= ket_es
   make_contraction!(gates, zytensors, psi, chi, cutoff, checklinkdim)
-  continue
   normalize!(psi)
   # make_contraction_buildin!(gates, zytensors, psi, chi, cutoff, checklinkdim)
   # expectation value
@@ -67,12 +66,12 @@ dir_str = "$(ROOT_PATH)/data/"
 if !isdir("$dir_str")
     mkdir("$dir_str")
 end
-file_str = "2D_sqr_Whip_L$(L)_Chi$(chi)_ZZ"
+file_str = "2D_sqr_Whip_L$(L)_Chi$(chi)_verifyEE"
 
-# jldsave("$dir_str$file_str"*".jld2"; 
-#     saved_svn=SvNs, 
-#     saved_evn=EvNs_new,
-#     saved_linkdim=MaxDims,
-#     saved_thetas=THETAS,
-#     saved_zz=ZZs
-# )
+jldsave("$dir_str$file_str"*".jld2"; 
+    saved_svn=SvNs, 
+    saved_evn=EvNs_new,
+    saved_linkdim=MaxDims,
+    saved_thetas=THETAS,
+    saved_zz=ZZs
+)

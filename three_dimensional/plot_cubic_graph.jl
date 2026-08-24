@@ -3,6 +3,10 @@ using Graphs
 using CairoMakie
 using GraphMakie
 
+"""
+julia plot_cubic_graph.jl --lx 2 --ly 2 --lz 2 --theta 0.3 --out cube.png
+"""
+
 include("tns_funcs.jl")
 
 function directed_cubic_graph(cubic::CubicWhipGraph)
@@ -92,12 +96,31 @@ function plot_cubic_whip_graph(
 end
 
 function main(args)
-    lx = length(args) >= 1 ? parse(Int, args[1]) : 2
-    ly = length(args) >= 2 ? parse(Int, args[2]) : lx
-    lz = length(args) >= 3 ? parse(Int, args[3]) : lx
-    theta = length(args) >= 4 ? parse(Float64, args[4]) : pi / 4
-    outfile = length(args) >= 5 ? args[5] : "three_dimensional/cubic_whip_graph.png"
-
+    lx,ly,lz = 2,2,2
+    theta = pi / 4
+    outfile = "graph.png"
+    for i in eachindex(args)
+        if args[i] == "--lx"
+            lx = parse(Int, args[i+1])
+            i += 1
+        end
+        if args[i] == "--ly"
+            ly = parse(Int, args[i+1])
+            i += 1
+        end
+        if args[i] == "--lz"
+            lz = parse(Int, args[i+1])
+            i += 1
+        end
+        if args[i] == "--theta"
+            theta = parse(Float64, args[i+1])
+            i += 1
+        end
+        if args[i] == "--out"
+            outfile = args[i+1]
+            i += 1
+        end
+    end
     outfile, cubic = plot_cubic_whip_graph(lx, ly, lz, theta; outfile=outfile)
     println("Saved directed graph to $outfile")
     println("source: $(cubic.source) $(idx2coord(cubic.source, cubic.dims))")

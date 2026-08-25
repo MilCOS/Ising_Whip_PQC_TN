@@ -137,6 +137,32 @@ function _normalize_message!(message::Vector{Float64})
     return message
 end
 
+function pair_normalize_messages!(
+    tn::DoubleLayerTN,
+    messages::Dict{Tuple{Int64,Int64},Vector{Float64}},
+)
+    for (u, v) in tn.edge_endpoints
+        overlap = dot(messages[(u, v)], messages[(v, u)])
+        if overlap > eps(Float64)
+            scale = sqrt(overlap)
+            messages[(u, v)] ./= scale
+            messages[(v, u)] ./= scale
+        end
+    end
+    return messages
+end
+
+function _message_residual(
+    old_messages::Dict{Tuple{Int64,Int64},Vector{Float64}},
+    new_messages::Dict{Tuple{Int64,Int64},Vector{Float64}},
+)
+    residual = 0.0
+    for key in keys(old_messages)
+        residual = max(residual, norm(new_messages[key] - old_messages[key], Inf))
+    end
+    return residual
+end
+
 function _contract_factor(
     factor::Array{Float64},
     neighbors::Vector{Int64},
@@ -175,9 +201,9 @@ function update_bp_messages(
     tn::DoubleLayerTN,
     messages::Dict{Tuple{Int64,Int64},Vector{Float64}};
     damping::Float64=0.5,
+    pair_normalize::Bool=false,
 )
     new_messages = deepcopy(messages)
-    residual = 0.0
     for site in vertices(tn.graph)
         neighbors = tn.incident_neighbors[site]
         factor = tn.factors[site]
@@ -188,10 +214,11 @@ function update_bp_messages(
             old = messages[(site, nbr)]
             updated = (1 - damping) .* old .+ damping .* proposed
             _normalize_message!(updated)
-            residual = max(residual, norm(updated - old, Inf))
             new_messages[(site, nbr)] = updated
         end
     end
+    pair_normalize && pair_normalize_messages!(tn, new_messages)
+    residual = _message_residual(messages, new_messages)
     return new_messages, residual
 end
 
@@ -221,15 +248,17 @@ function run_bp(
     maxiter::Int64=500,
     tol::Float64=1e-10,
     damping::Float64=0.5,
+    pair_normalize::Bool=false,
     messages::Union{Nothing,Dict{Tuple{Int64,Int64},Vector{Float64}}}=nothing,
 )
     current = messages === nothing ? initialize_messages(tn) : deepcopy(messages)
+    pair_normalize && pair_normalize_messages!(tn, current)
     residual = Inf
     converged = false
     iter = 0
     for n in 1:maxiter
         iter = n
-        current, residual = update_bp_messages(tn, current; damping=damping)
+        current, residual = update_bp_messages(tn, current; damping=damping, pair_normalize=pair_normalize)
         if residual < tol
             converged = true
             break
@@ -239,110 +268,15 @@ function run_bp(
     return BPResult(current, converged, iter, residual, value, site_values, edge_values)
 end
 
-function bp_norm(
+function bp_network_value(
     psi::Vector{ITensor},
     cubic::CubicWhipGraph;
+    operators::Dict{Int64,Matrix{Float64}}=Dict{Int64,Matrix{Float64}}(),
     maxiter::Int64=500,
     tol::Float64=1e-10,
     damping::Float64=0.5,
+    pair_normalize::Bool=false,
 )
-    tn = double_layer_tn(psi, cubic)
-    return run_bp(tn; maxiter=maxiter, tol=tol, damping=damping)
-end
-
-function bp_zz(
-    psi::Vector{ITensor},
-    cubic::CubicWhipGraph,
-    i::Int64,
-    j::Int64;
-    maxiter::Int64=500,
-    tol::Float64=1e-10,
-    damping::Float64=0.5,
-)
-    denom = bp_norm(psi, cubic; maxiter=maxiter, tol=tol, damping=damping)
-    ops = Dict(i => z_operator_matrix(), j => z_operator_matrix())
-    numer_tn = double_layer_tn(psi, cubic; operators=ops)
-    numer = run_bp(numer_tn; maxiter=maxiter, tol=tol, damping=damping)
-    return numer.value / denom.value, numer, denom
-end
-
-function bp_sink_zz(
-    psi::Vector{ITensor},
-    cubic::CubicWhipGraph;
-    maxiter::Int64=500,
-    tol::Float64=1e-10,
-    damping::Float64=0.5,
-)
-    i, j = last_sink_bond(cubic)
-    return bp_zz(psi, cubic, i, j; maxiter=maxiter, tol=tol, damping=damping)
-end
-
-function bp_projector_probability(
-    psi::Vector{ITensor},
-    cubic::CubicWhipGraph,
-    projectors::Dict{Int64,Symbol};
-    maxiter::Int64=500,
-    tol::Float64=1e-10,
-    damping::Float64=0.5,
-)
-    ops = Dict(site => projector_operator_matrix(state) for (site, state) in projectors)
-    tn = double_layer_tn(psi, cubic; operators=ops)
-    return run_bp(tn; maxiter=maxiter, tol=tol, damping=damping)
-end
-
-function bp_zz_projector(
-    psi::Vector{ITensor},
-    cubic::CubicWhipGraph,
-    i::Int64,
-    j::Int64;
-    maxiter::Int64=500,
-    tol::Float64=1e-10,
-    damping::Float64=0.5,
-)
-    denom = bp_norm(psi, cubic; maxiter=maxiter, tol=tol, damping=damping)
-    pp = bp_projector_probability(
-        psi,
-        cubic,
-        Dict(i => :up, j => :up);
-        maxiter=maxiter,
-        tol=tol,
-        damping=damping,
-    )
-    pm = bp_projector_probability(
-        psi,
-        cubic,
-        Dict(i => :up, j => :down);
-        maxiter=maxiter,
-        tol=tol,
-        damping=damping,
-    )
-    mp = bp_projector_probability(
-        psi,
-        cubic,
-        Dict(i => :down, j => :up);
-        maxiter=maxiter,
-        tol=tol,
-        damping=damping,
-    )
-    mm = bp_projector_probability(
-        psi,
-        cubic,
-        Dict(i => :down, j => :down);
-        maxiter=maxiter,
-        tol=tol,
-        damping=damping,
-    )
-    zz = (pp.value - pm.value - mp.value + mm.value) / denom.value
-    return zz, (upup=pp, updown=pm, downup=mp, downdown=mm), denom
-end
-
-function bp_sink_zz_projector(
-    psi::Vector{ITensor},
-    cubic::CubicWhipGraph;
-    maxiter::Int64=500,
-    tol::Float64=1e-10,
-    damping::Float64=0.5,
-)
-    i, j = last_sink_bond(cubic)
-    return bp_zz_projector(psi, cubic, i, j; maxiter=maxiter, tol=tol, damping=damping)
+    tn = double_layer_tn(psi, cubic; operators=operators)
+    return run_bp(tn; maxiter=maxiter, tol=tol, damping=damping, pair_normalize=pair_normalize)
 end

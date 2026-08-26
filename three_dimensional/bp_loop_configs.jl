@@ -156,6 +156,45 @@ function _config_q_matrix(
     return qmat
 end
 
+function _config_q_factorization(qmat::Matrix{Float64}; atol::Float64=1e-12)
+    decomp = svd(qmat)
+    rank = count(>(atol), decomp.S)
+    @assert rank > 0
+    scales = Diagonal(sqrt.(decomp.S[1:rank]))
+    left = Matrix(decomp.U[:, 1:rank] * scales)
+    right = Matrix(decomp.Vt[1:rank, :]' * scales)
+    return left, right
+end
+
+function _project_reduced_factor(reduced::Array{Float64}, bases::Vector{Matrix{Float64}})
+    isempty(bases) && return fill(reduced[])
+
+    projected_dims = Tuple(size(basis, 2) for basis in bases)
+    projected = zeros(Float64, projected_dims)
+
+    for ci in CartesianIndices(reduced)
+        original_inds = Tuple(ci)
+        base_weight = reduced[ci]
+        for ai in CartesianIndices(projected)
+            alpha_inds = Tuple(ai)
+            weight = base_weight
+            for pos in eachindex(bases)
+                weight *= bases[pos][original_inds[pos], alpha_inds[pos]]
+            end
+            projected[ai] += weight
+        end
+    end
+    return projected
+end
+
+function _config_alpha_values(
+    selected_edges::Vector{Int64},
+    edge_to_local_pos::Dict{Int64,Int64},
+    assignment::CartesianIndex,
+)
+    return ntuple(k -> assignment[edge_to_local_pos[selected_edges[k]]], length(selected_edges))
+end
+
 function config_relative_correction(
     tn::DoubleLayerTN,
     messages::Dict{Tuple{Int64,Int64},Vector{Float64}},
@@ -163,32 +202,42 @@ function config_relative_correction(
     site_values::Union{Nothing,Vector{Float64}}=nothing,
 )
     values = site_values === nothing ? bethe_contraction_value(tn, messages)[2] : site_values
-    endpoint_indices = Dict{Tuple{Int64,Int64},Index}()
-
-    for edge_id in config.edges
-        u, v = tn.edge_endpoints[edge_id]
-        q = tn.edge_dims[edge_id]
-        endpoint_indices[(u, edge_id)] = Index(q, "cfg,u=$u,e=$edge_id")
-        endpoint_indices[(v, edge_id)] = Index(q, "cfg,u=$v,e=$edge_id")
-    end
-
     selected = Set(config.edges)
-    contraction = ITensor(1.0)
-
-    for site in config.vertices
-        site_edges = [edge_id for edge_id in tn.incident_edges[site] if edge_id in selected]
-        reduced = _config_reduced_factor(tn, messages, site, site_edges, values[site])
-        inds = [endpoint_indices[(site, edge_id)] for edge_id in site_edges]
-        contraction *= ITensor(reduced, inds...)
-    end
+    edge_to_pos = Dict(edge_id => pos for (pos, edge_id) in enumerate(config.edges))
+    edge_ranks = Int64[]
+    projected_factors = Dict{Int64,Array{Float64}}()
+    site_edges = Dict{Int64,Vector{Int64}}()
+    edge_bases = Dict{Tuple{Int64,Int64},Matrix{Float64}}()
 
     for edge_id in config.edges
         u, v = tn.edge_endpoints[edge_id]
         qmat = _config_q_matrix(tn, messages, u, v, edge_id)
-        contraction *= ITensor(qmat, endpoint_indices[(u, edge_id)], endpoint_indices[(v, edge_id)])
+        left_basis, right_basis = _config_q_factorization(qmat)
+        edge_bases[(u, edge_id)] = left_basis
+        edge_bases[(v, edge_id)] = right_basis
+        push!(edge_ranks, size(left_basis, 2))
     end
 
-    return scalar(contraction)
+    for site in config.vertices
+        edges = [edge_id for edge_id in tn.incident_edges[site] if edge_id in selected]
+        site_edges[site] = edges
+        reduced = _config_reduced_factor(tn, messages, site, edges, values[site])
+        bases = [edge_bases[(site, edge_id)] for edge_id in edges]
+        projected_factors[site] = _project_reduced_factor(reduced, bases)
+    end
+
+    total = 0.0
+    for assignment in CartesianIndices(Tuple(edge_ranks))
+        weight = 1.0
+        for site in config.vertices
+            edges = site_edges[site]
+            inds = _config_alpha_values(edges, edge_to_pos, assignment)
+            weight *= projected_factors[site][inds...]
+        end
+        total += weight
+    end
+
+    return total
 end
 
 function config_loop_contraction_value(

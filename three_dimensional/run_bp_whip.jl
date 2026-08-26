@@ -9,13 +9,16 @@ julia run_bp_whip.jl \
 Methods:
   direct     <ZZ> from a signed Z_i Z_j impurity network
   projector  <ZZ> from four positive projector networks
-  loop       lmax=4 square-plaquette loop correction, using projector networks
+  loop       simple-loop correction up to --lmax, using projector networks
+  loop_config  BP loop-config correction up to --lmax, using projector networks
   all        run every available method
 """
 
 include("bp_direct.jl")
 include("bp_projector.jl")
-include("bp_loop.jl")
+# include("bp_loop.jl")
+include("bp_loop_simple.jl")
+include("bp_loop_configs.jl")
 
 function parse_bp_args(args)
     opts = Dict{String,String}(
@@ -27,6 +30,7 @@ function parse_bp_args(args)
         "cutoff" => "1e-12",
         "maxiter" => "500",
         "tol" => "1e-10",
+        "lmax" => "4",
         "damping" => "0.5",
         "pairnorm" => "false",
         "method" => "all",
@@ -61,16 +65,51 @@ function print_bp_result(label::String, value, result::BPResult)
 end
 
 function print_loop_result(label::String, result::LoopBPResult)
+    loop_sum = sum(result.loop_corrections)
+    nloops = length(result.loops)
     @printf(
         "%-24s value = %.16g | bp = %.16g | sum loop = %.3e | nloops = %d | converged = %s | residual = %.3e\n",
         label,
         result.value,
         result.bp.value,
-        sum(result.plaquette_corrections),
-        length(result.plaquette_corrections),
+        loop_sum,
+        nloops,
         string(result.bp.converged),
         result.bp.residual,
     )
+end
+
+function loop_length_summary(result::LoopBPResult)
+    counts = Dict{Int64,Int64}()
+    for loop in result.loops
+        counts[length(loop.vertices)] = get(counts, length(loop.vertices), 0) + 1
+    end
+    pairs = sort(collect(counts), by=first)
+    return join(["l$(len)=$(count)" for (len, count) in pairs], ", ")
+end
+
+function print_config_loop_result(label::String, result::LoopConfigBPResult)
+    rel_sum = sum(result.relative_corrections)
+    nconfigs = length(result.configs)
+    @printf(
+        "%-24s value = %.16g | bp = %.16g | sum rel = %.3e | nconfigs = %d | converged = %s | residual = %.3e\n",
+        label,
+        result.value,
+        result.bp.value,
+        rel_sum,
+        nconfigs,
+        string(result.bp.converged),
+        result.bp.residual,
+    )
+end
+
+function config_order_summary(result::LoopConfigBPResult)
+    counts = Dict{Int64,Int64}()
+    for config in result.configs
+        counts[length(config.edges)] = get(counts, length(config.edges), 0) + 1
+    end
+    pairs = sort(collect(counts), by=first)
+    return join(["y$(order)=$(count)" for (order, count) in pairs], ", ")
 end
 
 function run_direct_zz(psi, cubic; maxiter::Int64, tol::Float64, damping::Float64, pair_normalize::Bool)
@@ -108,9 +147,11 @@ function run_projector_zz(psi, cubic; maxiter::Int64, tol::Float64, damping::Flo
     return zz
 end
 
-function run_loop_zz(psi, cubic; maxiter::Int64, tol::Float64, damping::Float64)
+function run_loop_zz(psi, cubic; lmax::Int64, maxiter::Int64, tol::Float64, damping::Float64)
     println("loop correction uses pair-normalized BP messages internally")
-    zz, parts, denom = loop_sink_zz_projector(psi, cubic; maxiter=maxiter, tol=tol, damping=damping)
+    println("loop correction lmax = $lmax")
+    zz, parts, denom = loop_sink_zz_projector(psi, cubic; lmax=lmax, maxiter=maxiter, tol=tol, damping=damping)
+    println("loop counts: ", loop_length_summary(parts.upup))
     print_loop_result("loop projector up-up", parts.upup)
     print_loop_result("loop projector up-down", parts.updown)
     print_loop_result("loop projector down-up", parts.downup)
@@ -119,6 +160,22 @@ function run_loop_zz(psi, cubic; maxiter::Int64, tol::Float64, damping::Float64)
     prob_sum = (parts.upup.value + parts.updown.value + parts.downup.value + parts.downdown.value) / denom.value
     @printf("%-24s sumP  = %.16g\n", "loop projector BP", prob_sum)
     @printf("%-24s <ZZ>  = %.16g\n", "loop projector BP", zz)
+    return zz
+end
+
+function run_config_loop_zz(psi, cubic; lmax::Int64, maxiter::Int64, tol::Float64, damping::Float64)
+    println("config loop correction uses pair-normalized BP messages internally")
+    println("config loop correction ymax = $lmax")
+    zz, parts, denom = config_loop_sink_zz_projector(psi, cubic; ymax=lmax, maxiter=maxiter, tol=tol, damping=damping)
+    println("config counts: ", config_order_summary(parts.upup))
+    print_config_loop_result("config projector up-up", parts.upup)
+    print_config_loop_result("config projector up-down", parts.updown)
+    print_config_loop_result("config projector down-up", parts.downup)
+    print_config_loop_result("config projector down-down", parts.downdown)
+    print_config_loop_result("config denominator", denom)
+    prob_sum = (parts.upup.value + parts.updown.value + parts.downup.value + parts.downdown.value) / denom.value
+    @printf("%-24s sumP  = %.16g\n", "config loop BP", prob_sum)
+    @printf("%-24s <ZZ>  = %.16g\n", "config loop BP", zz)
     return zz
 end
 
@@ -133,6 +190,7 @@ function main(args)
     cutoff = parse(Float64, opts["cutoff"])
     maxiter = parse(Int, opts["maxiter"])
     tol = parse(Float64, opts["tol"])
+    lmax = parse(Int, opts["lmax"])
     damping = parse(Float64, opts["damping"])
     pair_normalize = parse_bool(opts["pairnorm"])
     method = opts["method"]
@@ -141,7 +199,7 @@ function main(args)
     psi, cubic, _ = prepare_cubic_whip_tns(lx, ly, lz, theta; chi=chi, cutoff=cutoff)
     i, j = last_sink_bond(cubic)
     println("sink bond: $i $(idx2coord(i, cubic.dims)) -> $j $(idx2coord(j, cubic.dims))")
-    @printf("BP params: maxiter = %d, tol = %.3e, damping = %.3f, pairnorm = %s\n\n", maxiter, tol, damping, string(pair_normalize))
+    @printf("BP params: maxiter = %d, tol = %.3e, damping = %.3f, pairnorm = %s, lmax = %d\n\n", maxiter, tol, damping, string(pair_normalize), lmax)
 
     if method == "direct" || method == "all"
         run_direct_zz(psi, cubic; maxiter=maxiter, tol=tol, damping=damping, pair_normalize=pair_normalize)
@@ -152,7 +210,10 @@ function main(args)
         println()
     end
     if method == "loop" || method == "with_loop" || method == "all"
-        run_loop_zz(psi, cubic; maxiter=maxiter, tol=tol, damping=damping)
+        run_loop_zz(psi, cubic; lmax=lmax, maxiter=maxiter, tol=tol, damping=damping)
+    end
+    if method == "loop_config" || method == "config_loop" || method == "all"
+        run_config_loop_zz(psi, cubic; lmax=lmax, maxiter=maxiter, tol=tol, damping=damping)
     end
 end
 

@@ -92,7 +92,8 @@ function make_cubic_whip_graph(lx::Int64, ly::Int64, lz::Int64, theta::Float64)
 
                 indeg = incoming_counts[dst_idx]
                 @assert indeg > 0
-                push!(gate_data, (src_idx, dst_idx, theta / indeg, dst, axis))
+                r = 3 / indeg # d/indeg where d=3
+                push!(gate_data, (src_idx, dst_idx, theta * r, dst, axis))
             end
         end
     end

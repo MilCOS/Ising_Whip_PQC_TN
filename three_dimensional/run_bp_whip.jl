@@ -209,10 +209,10 @@ function main(args)
         run_projector_zz(psi, cubic; maxiter=maxiter, tol=tol, damping=damping, pair_normalize=pair_normalize)
         println()
     end
-    if method == "loop" || method == "with_loop" || method == "all"
-        run_loop_zz(psi, cubic; lmax=lmax, maxiter=maxiter, tol=tol, damping=damping)
-        println()
-    end
+    # if method == "loop" || method == "with_loop" || method == "all"
+    #     run_loop_zz(psi, cubic; lmax=lmax, maxiter=maxiter, tol=tol, damping=damping)
+    #     println()
+    # end
     if method == "loop_config" || method == "config_loop" || method == "all"
         run_config_loop_zz(psi, cubic; lmax=lmax, maxiter=maxiter, tol=tol, damping=damping)
         println()

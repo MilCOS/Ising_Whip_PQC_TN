@@ -38,6 +38,18 @@ const METHOD_COLORS = Dict(
     :config_loop_bp => Makie.wong_colors()[3],
 )
 
+function lmax_style(lmax, lmax_list)
+    idx = findfirst(==(lmax), lmax_list)
+    n = length(lmax_list)
+    t = n == 1 ? 1.0 : (idx - 1) / (n - 1)
+
+    return (
+        markersize = 8 + 5t,
+        linewidth = 1.7 + 1.0t,
+        alpha = 0.5 + 0.5t,
+    )
+end
+
 struct ZZRecord
     L::Int
     theta_over_pi::Float64
@@ -111,20 +123,21 @@ function load_records()
     return records
 end
 
-function draw_method!(ax, xs, ys, convs, method)
-    color = METHOD_COLORS[method]
+function draw_method!(ax, xs, ys, convs, method, lmax, lmax_list)
+    style = lmax_style(lmax, lmax_list)
+    color = (METHOD_COLORS[method], style.alpha)
     marker = METHOD_MARKERS[method]
 
     for i in 1:(length(xs) - 1)
         linestyle = convs[i] && convs[i + 1] ? nothing : :dash
-        lines!(ax, xs[i:i + 1], ys[i:i + 1]; color, linewidth=2.2, linestyle)
+        lines!(ax, xs[i:i + 1], ys[i:i + 1]; color, linewidth=style.linewidth, linestyle)
     end
 
     good = findall(identity, convs)
     bad = findall(!, convs)
 
     if !isempty(good)
-        scatter!(ax, xs[good], ys[good]; color, marker, markersize=10)
+        scatter!(ax, xs[good], ys[good]; color, marker, markersize=style.markersize)
     end
     if !isempty(bad)
         scatter!(ax, xs[bad], ys[bad];
@@ -132,7 +145,7 @@ function draw_method!(ax, xs, ys, convs, method)
             strokecolor=color,
             strokewidth=2,
             marker,
-            markersize=10,
+            markersize=style.markersize,
         )
     end
 end
@@ -144,33 +157,35 @@ function build_figure(records)
     L_list = TARGET_L
     lmax_list = TARGET_LMAX
 
-    fig = Figure(size=(1180, 720), fontsize=16)
+    fig = Figure(size=(1180, 430), fontsize=16)
     axes = Axis[]
 
-    for (row, lmax) in enumerate(lmax_list), (col, L) in enumerate(L_list)
+    for (col, L) in enumerate(L_list)
         ax = Axis(
-            fig[row, col],
-            xlabel=row == length(lmax_list) ? "θ/π" : "",
+            fig[1, col],
+            xlabel="θ/π",
             ylabel=col == 1 ? "<ZZ>" : "",
-            title="L=$(L), lmax=$(lmax)",
+            title="L=$(L)",
             xticks=0.0:0.1:0.5,
             limits=(nothing, Y_LIMITS),
         )
         push!(axes, ax)
 
-        panel_records = sort(
-            filter(record -> record.L == L && record.lmax == lmax, records),
-            by=record -> record.theta_over_pi,
-        )
+        for lmax in lmax_list
+            for method in METHOD_ORDER
+                if (method != :config_loop_bp)&&(lmax != lmax_list[end]) continue end
+                panel_records = sort(
+                filter(record -> record.L == L && record.lmax == lmax, records),
+                by=record -> record.theta_over_pi,
+            )
+                method_records = filter(record -> haskey(record.values, method), panel_records)
+                isempty(method_records) && continue
 
-        for method in METHOD_ORDER
-            method_records = filter(record -> haskey(record.values, method), panel_records)
-            isempty(method_records) && continue
-
-            xs = [record.theta_over_pi for record in method_records]
-            ys = abs.([record.values[method] for record in method_records])
-            convs = [get(record.converged, method, false) for record in method_records]
-            draw_method!(ax, xs, ys, convs, method)
+                xs = [record.theta_over_pi for record in method_records]
+                ys = abs.([record.values[method] for record in method_records])
+                convs = [get(record.converged, method, false) for record in method_records]
+                draw_method!(ax, xs, ys, convs, method, lmax, lmax_list)
+            end
         end
     end
 
@@ -189,6 +204,18 @@ function build_figure(records)
     ]
     method_labels = [METHOD_LABELS[method] for method in METHOD_ORDER]
 
+    lmax_handles = [
+        begin
+            style = lmax_style(lmax, lmax_list)
+            [
+                LineElement(color=(:black, style.alpha), linewidth=style.linewidth),
+                MarkerElement(color=(:black, style.alpha), marker=:circle, markersize=style.markersize),
+            ]
+        end
+        for lmax in lmax_list
+    ]
+    lmax_labels = ["lmax=$(lmax)" for lmax in lmax_list]
+
     convergence_handles = [
         [
             LineElement(color=:black, linewidth=2.2),
@@ -206,10 +233,10 @@ function build_figure(records)
         ],
     ]
 
-    Legend(fig[1:length(lmax_list), length(L_list) + 1],
-        [method_handles, convergence_handles],
-        [method_labels, ["converged", "not converged"]],
-        ["method", "status"],
+    Legend(fig[1, length(L_list) + 1],
+        [method_handles, lmax_handles, convergence_handles],
+        [method_labels, lmax_labels, ["converged", "not converged"]],
+        ["method", "lmax", "status"],
         framevisible=false,
     )
 

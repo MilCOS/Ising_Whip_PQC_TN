@@ -67,12 +67,12 @@ for (i,theta) in enumerate(THETAS)
     val_tot += real(zz_val/val3)
   end
   push!(MaxDims, maximum(link_dims))
-  push!(ZZs, val_tot/N)
+  push!(ZZs, val_tot)
   # boundary X
   """
   x_xpsi = deepcopy(psi)
   for i0 in b_indices
-    x_xpsi[i0] *= op("Z", sites[i0])
+    x_xpsi[i0] *= op("X", sites[i0]) # should be X; Z was a typo
     noprime!(x_xpsi[i0], tags="Site")
   end
   x_x_val, _, linkdims = contract_twopeps_bdr_mps(x_xpsi, psi, chi, cutoff, plev=1)

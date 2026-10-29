@@ -1,6 +1,6 @@
 #!bin/sh
-L=4
-lmax=4
+L=3
+lmax=6
 mkdir -p "./data"
 rm -f "./log.txt"
 
@@ -8,7 +8,7 @@ for i in {0..60}; do
   theta=$(printf "%1.3fpi" $(echo "scale=4; 0.0 + 0.05 * $i" | bc))
   echo "calculate L=${L}, THETA=${theta} with LMAX=${lmax}"
 
-  julia --project=.. ./run_bp_whip.jl \
+  julia ./run_bp_whip.jl \
   --lx $L --ly $L --lz $L --theta $theta \
   --lmax $lmax \
   --method all --maxiter 1000 --tol 1e-8 \

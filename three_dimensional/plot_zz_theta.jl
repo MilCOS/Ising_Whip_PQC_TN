@@ -10,30 +10,30 @@ end
 const SCRIPT_DIR = @__DIR__
 const DATA_DIR = joinpath(SCRIPT_DIR, "data")
 const FIGURE_DIR = joinpath(SCRIPT_DIR, "figures")
-const TARGET_L = [4, 6]
-const TARGET_LMAX = [4, 6]
-const Y_LIMITS = (-0.05, 1.1)
+const TARGET_L = [3]
+const TARGET_LMAX = [4,6]
+const Y_LIMITS = (-1.5, 1.5)
 
 const METHOD_ORDER = [
-    :direct_bp,
+    # :direct_bp,
     :projector_bp,
     :config_loop_bp,
 ]
 
 const METHOD_LABELS = Dict(
-    :direct_bp => "direct BP",
+    # :direct_bp => "direct BP",
     :projector_bp => "projector BP",
     :config_loop_bp => "config loop BP",
 )
 
 const METHOD_MARKERS = Dict(
-    :direct_bp => :circle,
+    # :direct_bp => :circle,
     :projector_bp => :rect,
     :config_loop_bp => :diamond,
 )
 
 const METHOD_COLORS = Dict(
-    :direct_bp => Makie.wong_colors()[1],
+    # :direct_bp => Makie.wong_colors()[1],
     :projector_bp => Makie.wong_colors()[2],
     :config_loop_bp => Makie.wong_colors()[3],
 )
@@ -86,9 +86,9 @@ function parse_zz_file(path::AbstractString)
         c = parse_converged(line)
 
         if startswith(line, "direct numerator")
-            !ismissing(c) && push!(convergence_terms[:direct_bp], c)
+            (!ismissing(c)) & (:direct_bp in keys(convergence_terms))  && push!(convergence_terms[:direct_bp], c)
         elseif startswith(line, "denominator")
-            !ismissing(c) && push!(convergence_terms[:direct_bp], c)
+            (!ismissing(c)) & (:direct_bp in keys(convergence_terms)) && push!(convergence_terms[:direct_bp], c)
             !ismissing(c) && push!(convergence_terms[:projector_bp], c)
         elseif startswith(line, "projector up-up") ||
                startswith(line, "projector up-down") ||
@@ -99,7 +99,7 @@ function parse_zz_file(path::AbstractString)
             !ismissing(c) && push!(convergence_terms[:config_loop_bp], c)
         end
 
-        if startswith(line, "direct BP") && occursin("<ZZ>", line)
+        if startswith(line, "direct BP") && occursin("<ZZ>", line) && :direct_bp in keys(convergence_terms)
             values[:direct_bp] = parse_value_after_equals(line)
         elseif startswith(line, "projector BP") && occursin("<ZZ>", line)
             values[:projector_bp] = parse_value_after_equals(line)
@@ -157,7 +157,7 @@ function build_figure(records)
     L_list = TARGET_L
     lmax_list = TARGET_LMAX
 
-    fig = Figure(size=(1180, 430), fontsize=16)
+    fig = Figure(size=(800, 330), fontsize=16)
     axes = Axis[]
 
     for (col, L) in enumerate(L_list)
@@ -166,7 +166,7 @@ function build_figure(records)
             xlabel="θ/π",
             ylabel=col == 1 ? "<ZZ>" : "",
             title="L=$(L)",
-            xticks=0.0:0.1:0.5,
+            xticks=0.0:1:3.0,
             limits=(nothing, Y_LIMITS),
         )
         push!(axes, ax)
@@ -182,7 +182,7 @@ function build_figure(records)
                 isempty(method_records) && continue
 
                 xs = [record.theta_over_pi for record in method_records]
-                ys = abs.([record.values[method] for record in method_records])
+                ys = [record.values[method] for record in method_records]
                 convs = [get(record.converged, method, false) for record in method_records]
                 draw_method!(ax, xs, ys, convs, method, lmax, lmax_list)
             end

@@ -108,7 +108,7 @@ function inspect_noise(input_path)
   end
   
   colors = cgrad(:heat, length(sigmas)+1; categorical=true)[2:end]
-  colors = ["#$s" for s in ["fed9b7","84a98c","f07167","f07167"]]
+  colors = ["#$s" for s in ["fed9b7","84a98c","f07167","a44a3f"]]
   xvalues = thetas ./ pi
   for sigma_id in eachindex(sigmas)
     label = "sigma/pi=$(round(sigmas[sigma_id] / pi; digits=4))"

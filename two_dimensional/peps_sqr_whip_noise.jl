@@ -13,12 +13,36 @@ include(joinpath(@__DIR__, "peps_funcs.jl"))
 const Coord = Tuple{Int,Int}
 const DirectedEdge = Tuple{Coord,Coord}
 
+function theta_grid_pi(theta_min, theta_max, ntheta, critical_window, critical_step)
+  theta_min <= theta_max || error("theta-min-pi must not exceed theta-max-pi")
+  ntheta >= 1 || error("ntheta must be at least 1")
+  critical_window >= 0 || error("critical-window-pi must be nonnegative")
+  critical_step >= 0 || error("critical-step-pi must be nonnegative")
+
+  grid = ntheta == 1 ? [Float64(theta_min)] :
+         collect(range(Float64(theta_min), Float64(theta_max); length=ntheta))
+  if critical_window > 0 && critical_step > 0
+    for critical_point in (-0.25, 0.25)
+      theta_min <= critical_point <= theta_max || continue
+      lower = max(theta_min, critical_point - critical_window)
+      upper = min(theta_max, critical_point + critical_window)
+      append!(grid, lower:critical_step:upper)
+      # Explicitly retain the window ends and the transition point even when
+      # floating-point range construction does not land exactly on them.
+      append!(grid, (lower, critical_point, upper))
+    end
+  end
+  return sort!(unique(round.(grid; digits=14)))
+end
+
 Base.@kwdef struct NoiseConfig
   L::Int = 4
   chi::Int = 32
   min_chi::Int = 4
   cutoff::Float64 = 1e-12
-  thetas::Vector{Float64} = collect(range(0.0, pi / 2; length=41))
+  thetas::Vector{Float64} = pi .* theta_grid_pi(0.0, 1.0, 41, 0.05, 0.0025)
+  critical_window_pi::Float64 = 0.05
+  critical_step_pi::Float64 = 0.0025
   sigmas::Vector{Float64} = pi .* [0.0, 0.01, 0.025, 0.05]
   nrealizations::Int = 20
   selector::Symbol = :single
@@ -43,6 +67,8 @@ Options are passed as --name=value:
   --theta-min-pi=0              minimum theta divided by pi
   --theta-max-pi=1.0            maximum theta divided by pi
   --ntheta=41                   number of theta points
+  --critical-window-pi=0.05     half-width refined around theta/pi=+/-0.25
+  --critical-step-pi=0.0025     refined-grid spacing; set 0 to disable
   --sigmas-pi=0,0.01,0.025,0.05
                                 additive angle-noise standard deviations / pi
   --samples=20                  number of disorder realizations
@@ -87,9 +113,11 @@ function parse_options(args)::NoiseConfig
   end
 
   getoption(name, default) = get(options, name, string(default))
-  theta_min = parse(Float64, getoption("theta-min-pi", 0.0)) * pi
-  theta_max = parse(Float64, getoption("theta-max-pi", 1.0)) * pi
+  theta_min_pi = parse(Float64, getoption("theta-min-pi", 0.0))
+  theta_max_pi = parse(Float64, getoption("theta-max-pi", 1.0))
   ntheta = parse(Int, getoption("ntheta", 41))
+  critical_window_pi = parse(Float64, getoption("critical-window-pi", 0.05))
+  critical_step_pi = parse(Float64, getoption("critical-step-pi", 0.0025))
   sigma_text = getoption("sigmas-pi", "0,0.01,0.025,0.05")
   sigmas = pi .* parse.(Float64, split(sigma_text, ","))
   edge_ops = uppercase.(strip.(split(getoption("edge-ops", "X"), ",")))
@@ -100,7 +128,10 @@ function parse_options(args)::NoiseConfig
     chi=parse(Int, getoption("chi", 32)),
     min_chi=parse(Int, getoption("min-chi", 4)),
     cutoff=parse(Float64, getoption("cutoff", 1e-12)),
-    thetas=collect(range(theta_min, theta_max; length=ntheta)),
+    thetas=pi .* theta_grid_pi(theta_min_pi, theta_max_pi, ntheta,
+                               critical_window_pi, critical_step_pi),
+    critical_window_pi=critical_window_pi,
+    critical_step_pi=critical_step_pi,
     sigmas=sigmas,
     nrealizations=parse(Int, getoption("samples", 20)),
     selector=Symbol(lowercase(getoption("selector", "single"))),
@@ -120,6 +151,8 @@ function validate(config::NoiseConfig)
   config.chi >= 1 || error("chi must be positive")
   1 <= config.min_chi <= config.chi || error("min_chi must satisfy 1 <= min_chi <= chi")
   config.cutoff >= 0 || error("cutoff must be nonnegative")
+  config.critical_window_pi >= 0 || error("critical_window_pi must be nonnegative")
+  config.critical_step_pi >= 0 || error("critical_step_pi must be nonnegative")
   isempty(config.thetas) && error("At least one theta is required")
   isempty(config.sigmas) && error("At least one sigma is required")
   any(sigma -> sigma < 0.0, config.sigmas) && error("Noise strengths must be nonnegative")
@@ -250,6 +283,8 @@ function run_noise_scan(config::NoiseConfig)
   start_time = time_ns()
   println("Starting noisy PEPS scan")
   println("  L=$(config.L), chi=$(config.chi), min_chi=$(config.min_chi), cutoff=$(config.cutoff)")
+  println("  theta/pi=$(extrema(config.thetas ./ pi)), points=$(length(config.thetas)), " *
+          "critical window=$(config.critical_window_pi), step=$(config.critical_step_pi)")
   println("  selector=$(config.selector), gates=$(selector_description(config, selected_edges))")
   println("  edge operators=$(join(config.edge_operators, ',')), realizations=$(config.nrealizations)")
 
@@ -326,6 +361,9 @@ function run_noise_scan(config::NoiseConfig)
     chi=config.chi,
     min_chi=config.min_chi,
     cutoff=config.cutoff,
+    theta_sampling="critical_refined",
+    critical_window_pi=config.critical_window_pi,
+    critical_step_pi=config.critical_step_pi,
     seed=config.seed,
     nrealizations=config.nrealizations,
     total_time_sec=elapsed_seconds,

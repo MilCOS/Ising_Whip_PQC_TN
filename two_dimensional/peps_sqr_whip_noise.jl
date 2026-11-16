@@ -332,7 +332,7 @@ function run_noise_scan(config::NoiseConfig)
   elapsed_seconds = (time_ns() - start_time) * 1e-9
 
   mkpath(config.output_dir)
-  gate_tag = config.selector == :all ? "all" : "g" * join(selected_ids, "-")
+  gate_tag = config.selector == :all ? "all" : "g" * join(selected_ids[1:2], "-")
   base_name = "peps_whip_noise_L$(config.L)_chi$(config.chi)_$(config.selector)_" *
               "$(gate_tag)_$(config.correlation)_$(config.distribution)_" *
               "$(join(config.edge_operators, ""))_seed$(config.seed)"

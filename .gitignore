@@ -2,3 +2,4 @@
 *.png
 data/
 figures/
+.DS_Store
